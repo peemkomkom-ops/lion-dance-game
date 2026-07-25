@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>เชิดสิงโตมหาสนุก - เกมออกกำลังกายผ่านกล้อง</title>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,"Noto Sans Thai",sans-serif;background:#120b20;color:#fff;overflow-x:hidden}
+.wrap{max-width:1100px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+h1{margin:0;font-size:clamp(24px,4vw,42px)} .sub{opacity:.8;margin-top:4px}
+.panel{background:#211331;border:1px solid #56346d;border-radius:18px;padding:14px;margin-top:14px;box-shadow:0 12px 30px #0005}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stat{background:#160d23;border-radius:14px;padding:10px;text-align:center}.num{font-size:28px;font-weight:800}
+.game{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:20px;background:linear-gradient(#241044,#5b2140 58%,#e08b43 59%,#3b2518 60%);border:2px solid #70408b}
+canvas{position:absolute;inset:0;width:100%;height:100%}.cam{position:absolute;right:12px;top:12px;width:23%;min-width:150px;aspect-ratio:4/3;border-radius:14px;overflow:hidden;border:2px solid #fff8;background:#000;transform:scaleX(-1)}video{width:100%;height:100%;object-fit:cover}.camlabel{position:absolute;left:8px;top:8px;background:#0009;padding:3px 7px;border-radius:8px;font-size:12px}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#0008;text-align:center;padding:20px}.card{max-width:560px;background:#241331eF;border:1px solid #8b55a7;border-radius:20px;padding:24px}.card h2{font-size:32px;margin:0 0 8px}.card p{line-height:1.6}.hidden{display:none!important}
+button{border:0;border-radius:12px;padding:11px 17px;font-size:16px;font-weight:800;cursor:pointer;background:#ffbd35;color:#24120a}button.secondary{background:#5c3c6f;color:white}button:disabled{opacity:.45;cursor:not-allowed}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.hint{font-size:14px;opacity:.8;line-height:1.5}.status{font-weight:700}
+.good{color:#ffd35c}.danger{color:#ff9a9a}
+@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.cam{width:30%;min-width:110px}.card h2{font-size:25px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>🦁 เชิดสิงโตมหาสนุก</h1><div class="sub">เกมออกกำลังกายผ่านกล้อง — ขยับตัวให้ตรงกับท่าที่สิงโตต้องการ!</div></div>
+    <div class="controls"><button id="start">▶ เริ่มเกม</button><button class="secondary" id="reset">↻ รีเซ็ต</button></div>
+  </div>
+
+  <div class="panel stats">
+    <div class="stat">คะแนน<div class="num" id="score">0</div></div>
+    <div class="stat">คอมโบ<div class="num" id="combo">0</div></div>
+    <div class="stat">เวลา<div class="num" id="time">60</div></div>
+    <div class="stat">ภารกิจ<div class="num" id="mission">—</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="game">
+      <canvas id="game"></canvas>
+      <div class="cam"><video id="video" autoplay playsinline muted></video><div class="camlabel">📷 กล้อง</div></div>
+      <div id="overlay" class="overlay">
+        <div class="card">
+          <h2>🥁 พร้อมเชิดสิงโตหรือยัง?</h2>
+          <p>อนุญาตให้เว็บใช้กล้อง แล้วทำท่าตามภารกิจบนหน้าจอ<br>
+          <b>ยกมือซ้าย / ยกมือขวา / ย่อตัว / ยืนขึ้น</b></p>
+          <button id="start2">📷 เปิดกล้องและเริ่มเกม</button>
+          <p class="hint">เกมประมวลผลการเคลื่อนไหวในเครื่อง ไม่ต้องอัปโหลดวิดีโอไปที่เซิร์ฟเวอร์</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel hint">
+    <b>วิธีเล่น:</b> ยืนให้เห็นช่วงตัวและแขนในกล้อง • ทำท่าตามภารกิจ • ท่าถูกจะได้คะแนนและคอมโบ • เมื่อจบรอบจะแสดงคะแนนรวม
+    <br><span id="status" class="status">สถานะ: ยังไม่เริ่ม</span>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const video=document.getElementById('video'), overlay=document.getElementById('overlay');
+const scoreEl=document.getElementById('score'), comboEl=document.getElementById('combo'),timeEl=document.getElementById('time'),missionEl=document.getElementById('mission'),statusEl=document.getElementById('status');
+let score=0,combo=0,timeLeft=60,running=false,stream=null,lastAction=0,lastPose=null,raf=0,timer=null;
+let missionIndex=0;
+const missions=[
+ {name:'ยกมือซ้าย',key:'left',emoji:'⬅️',text:'ยกมือซ้ายขึ้นเหนือไหล่'},
+ {name:'ยกมือขวา',key:'right',emoji:'➡️',text:'ยกมือขวาขึ้นเหนือไหล่'},
+ {name:'ยืนขึ้น',key:'up',emoji:'⬆️',text:'ยืนตัวตรง แล้วยกมือขึ้น'},
+ {name:'ย่อตัว',key:'down',emoji:'⬇️',text:'ย่อตัวลงเล็กน้อย แล้วกลับขึ้น'},
+];
+
+function resize(){canvas.width=canvas.clientWidth*devicePixelRatio;canvas.height=canvas.clientHeight*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}
+addEventListener('resize',resize);resize();
+
+function drawScene(){
+ const w=canvas.clientWidth,h=canvas.clientHeight;ctx.clearRect(0,0,w,h);
+ // moon / lanterns
+ ctx.font=Math.min(w,h)*.06+'px sans-serif';ctx.fillText('🌕',w*.07,h*.17);ctx.fillText('🏮',w*.78,h*.18);ctx.fillText('🏮',w*.88,h*.30);
+ // ground drums
+ ctx.font=Math.min(w,h)*.12+'px sans-serif';ctx.fillText('🥁',w*.10,h*.83);ctx.fillText('🥁',w*.82,h*.83);
+ // lion
+ const bounce=running?Math.sin(Date.now()/140)*5:0;
+ ctx.font=Math.min(w,h)*.23+'px sans-serif';ctx.textAlign='center';ctx.fillText('🦁',w*.50,h*.70+bounce);
+ ctx.font=Math.min(w,h)*.055+'px sans-serif';ctx.fillStyle='#fff';ctx.fillText('เชิดสิงโต!',w*.50,h*.90);
+ ctx.textAlign='left';
+ requestAnimationFrame(drawScene);
+}
+drawScene();
+
+function setMission(){
+ const m=missions[missionIndex%missions.length];missionEl.textContent=m.emoji;
+ missionEl.title=m.text; statusEl.textContent='ภารกิจ: '+m.text;
+}
+function updateStats(){scoreEl.textContent=score;comboEl.textContent=combo;timeEl.textContent=timeLeft}
+function success(){
+ const now=performance.now(); if(now-lastAction<850)return; lastAction=now;
+ score+=10+Math.min(combo,10)*2; combo++; updateStats();
+ statusEl.innerHTML='<span class="good">🎉 เยี่ยม! ทำสำเร็จ +คะแนน</span>';
+ missionIndex++;setMission();
+}
+function failReset(){combo=0;updateStats()}
+
+function detect(lm){
+ if(!running||!lm)return;
+ const L=lm[15], R=lm[16], LS=lm[11], RS=lm[12], nose=lm[0], hips=lm[23]&&lm[24]?(lm[23].y+lm[24].y)/2:null;
+ const m=missions[missionIndex%missions.length];
+ let ok=false;
+ if(m.key==='left') ok=L.y<LS.y-0.08;
+ if(m.key==='right') ok=R.y<RS.y-0.08;
+ if(m.key==='up') ok=L.y<LS.y-0.10 && R.y<RS.y-0.10;
+ if(m.key==='down' && hips!==null) ok=hips>0.64;
+ if(ok)success();
+ else if(Math.random()<0.012)failReset();
+}
+
+const pose=new Pose({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${file}`});
+pose.setOptions({modelComplexity:0, smoothLandmarks:true, enableSegmentation:false, minDetectionConfidence:.55,minTrackingConfidence:.55});
+pose.onResults(r=>{lastPose=r.poseLandmarks;detect(lastPose)});
+
+async function startGame(){
+ try{
+   if(!stream) stream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'},audio:false});
+   video.srcObject=stream; await video.play();
+   running=true;score=0;combo=0;timeLeft=60;missionIndex=0;setMission();updateStats();
+   overlay.classList.add('hidden');statusEl.textContent='สถานะ: เล่นอยู่ 🥁';
+   if(timer)clearInterval(timer);
+   timer=setInterval(()=>{if(!running)return;timeLeft--;updateStats();if(timeLeft<=0)endGame()},1000);
+   const cam=new Camera(video,{onFrame:async()=>{if(running)await pose.send({image:video})},width:640,height:480});
+   cam.start();
+ }catch(e){
+   statusEl.innerHTML='<span class="danger">เปิดกล้องไม่สำเร็จ: กรุณาอนุญาต Camera ในเบราว์เซอร์</span>';
+ }
+}
+function endGame(){
+ running=false;clearInterval(timer);timer=null;
+ overlay.classList.remove('hidden');
+ overlay.innerHTML=`<div class="card"><h2>🏆 จบการเชิดสิงโต!</h2><p>คะแนนของคุณคือ <b style="font-size:32px">${score}</b> คะแนน<br>คอมโบสูงสุดและความสนุกอยู่ที่การขยับให้ต่อเนื่อง</p><button id="again">🥁 เล่นอีกครั้ง</button></div>`;
+ document.getElementById('again').onclick=startGame;
+ statusEl.textContent='สถานะ: จบเกม';
+}
+function resetGame(){running=false;score=0;combo=0;timeLeft=60;missionIndex=0;updateStats();setMission();statusEl.textContent='สถานะ: รีเซ็ตแล้ว';overlay.classList.remove('hidden');}
+document.getElementById('start').onclick=startGame;document.getElementById('start2').onclick=startGame;document.getElementById('reset').onclick=resetGame;
+setMission();updateStats();
+</script>
+</body>
+</html>
